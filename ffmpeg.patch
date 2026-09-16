@@ -33,7 +33,29 @@ index e536d1a449..0c4a46bf79 100644
      set(OPTIONS "--toolchain=msvc ${OPTIONS}")
      # This is required because ffmpeg depends upon optimizations to link correctly
      string(APPEND VCPKG_COMBINED_C_FLAGS_DEBUG " -O2")
-@@ -713,6 +726,11 @@ if (NOT VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "release")
+@@ -152,6 +165,10 @@ endif()
+ if(VCPKG_HOST_IS_WINDOWS)
+-    vcpkg_acquire_msys(MSYS_ROOT PACKAGES automake)
++    if(DEFINED ENV{KYTY_MSYS_ROOT})
++        file(TO_CMAKE_PATH "$ENV{KYTY_MSYS_ROOT}" MSYS_ROOT)
++    else()
++        vcpkg_acquire_msys(MSYS_ROOT PACKAGES automake)
++    endif()
+     set(SHELL "${MSYS_ROOT}/usr/bin/bash.exe")
+     vcpkg_execute_required_process(
+         COMMAND "${SHELL}" -c "'/usr/bin/automake' --print-lib"
+         OUTPUT_VARIABLE automake_lib
+@@ -695,4 +712,8 @@ endforeach()
+-vcpkg_find_acquire_program(PKGCONFIG)
++if(VCPKG_HOST_IS_WINDOWS AND DEFINED ENV{KYTY_MSYS_ROOT})
++    set(PKGCONFIG "${MSYS_ROOT}/clang64/bin/pkgconf.exe")
++else()
++    vcpkg_find_acquire_program(PKGCONFIG)
++endif()
+ set(OPTIONS "${OPTIONS} --pkg-config=\"${PKGCONFIG}\"")
+ if(VCPKG_LIBRARY_LINKAGE STREQUAL "static")
+     set(OPTIONS "${OPTIONS} --pkg-config-flags=--static")
+@@ -713,6 +734,11 @@ if (NOT VCPKG_BUILD_TYPE OR VCPKG_BUILD_TYPE STREQUAL "release")
      # We use response files here as the only known way to handle spaces in paths
      set(crsp "${CURRENT_BUILDTREES_DIR}/${TARGET_TRIPLET}-rel/cflags.rsp")
      string(REGEX REPLACE "-arch [A-Za-z0-9_]+" "" VCPKG_COMBINED_C_FLAGS_RELEASE_SANITIZED "${VCPKG_COMBINED_C_FLAGS_RELEASE}")

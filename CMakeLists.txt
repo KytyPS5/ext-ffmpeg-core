@@ -4,8 +4,6 @@ endif()
 
 add_library(${FFMPEG_CORE_NAME} INTERFACE)
 
-target_include_directories(${FFMPEG_CORE_NAME} INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-
 # Detect OS
 if (WIN32 AND NOT MINGW)
 	set(FFMPEG_PREBUILTS_NAME "ffmpeg-windows")
@@ -34,31 +32,41 @@ endif()
 
 # Compute current short git commit SHA
 execute_process(
-	COMMAND git rev-parse --short HEAD
+	COMMAND git rev-parse --short=12 HEAD
 	WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 	OUTPUT_VARIABLE FFMPEG_GIT_SHA
 	OUTPUT_STRIP_TRAILING_WHITESPACE)
 
-# Download prebuilt ffmpeg
-set(FFMPEG_ZIP_PATH "${CMAKE_BINARY_DIR}/externals/ffmpeg-${FFMPEG_GIT_SHA}.zip")
-if(NOT EXISTS "${FFMPEG_ZIP_PATH}")
-	message(STATUS "Downloading FFMPEG prebuilts...")
-	file(DOWNLOAD https://github.com/shadps4-emu/ext-ffmpeg-core/releases/download/${FFMPEG_GIT_SHA}/${FFMPEG_PREBUILTS_NAME}
-			"${FFMPEG_ZIP_PATH}" SHOW_PROGRESS
-		STATUS FILE_STATUS)
-	list(GET FILE_STATUS 0 STATUS_CODE)
-	if (NOT STATUS_CODE EQUAL 0)
-		file(REMOVE "${FFMPEG_ZIP_PATH}") # CMake create 0 byte file even if URL is invalid. So need to delete it.
-		message(FATAL_ERROR "No FFMPEG prebuilt found with corresponding commit SHA (${FFMPEG_GIT_SHA})")
+# An existing package can be tested before publishing it.
+set(FFMPEG_PREBUILT_DIR "" CACHE PATH "Directory containing an unpacked FFmpeg package")
+if(NOT FFMPEG_PREBUILT_DIR)
+	set(FFMPEG_PREBUILT_DIR "${CMAKE_BINARY_DIR}/externals/ffmpeg-${FFMPEG_GIT_SHA}")
+	set(FFMPEG_ZIP_PATH "${CMAKE_BINARY_DIR}/externals/${FFMPEG_GIT_SHA}-${FFMPEG_PREBUILTS_NAME}")
+	if(NOT EXISTS "${FFMPEG_ZIP_PATH}")
+		message(STATUS "Downloading FFmpeg libraries...")
+		file(DOWNLOAD https://github.com/KytyPS5/ext-ffmpeg-core/releases/download/${FFMPEG_GIT_SHA}/${FFMPEG_PREBUILTS_NAME}
+			"${FFMPEG_ZIP_PATH}" SHOW_PROGRESS STATUS FILE_STATUS)
+		list(GET FILE_STATUS 0 STATUS_CODE)
+		if(NOT STATUS_CODE EQUAL 0)
+			file(REMOVE "${FFMPEG_ZIP_PATH}")
+			message(FATAL_ERROR "Could not download FFmpeg ${FFMPEG_GIT_SHA}: ${FILE_STATUS}")
+		endif()
+	endif()
+	if(NOT EXISTS "${FFMPEG_PREBUILT_DIR}/include/libavcodec/avcodec.h")
+		file(MAKE_DIRECTORY "${FFMPEG_PREBUILT_DIR}")
+		execute_process(COMMAND ${CMAKE_COMMAND} -E tar xf "${FFMPEG_ZIP_PATH}"
+			WORKING_DIRECTORY "${FFMPEG_PREBUILT_DIR}" RESULT_VARIABLE FFMPEG_EXTRACT_RESULT)
+		if(NOT FFMPEG_EXTRACT_RESULT EQUAL 0)
+			message(FATAL_ERROR "Could not extract FFmpeg libraries")
+		endif()
 	endif()
 endif()
-
-set(FFMPEG_LIB_PATH "${CMAKE_BINARY_DIR}/externals/ffmpeg-${FFMPEG_GIT_SHA}/lib")
-if(NOT EXISTS "${FFMPEG_LIB_PATH}")
-	file(MAKE_DIRECTORY "${FFMPEG_LIB_PATH}")
-	execute_process(COMMAND ${CMAKE_COMMAND} -E tar xzf "${FFMPEG_ZIP_PATH}"
-		WORKING_DIRECTORY "${FFMPEG_LIB_PATH}")
+set(FFMPEG_LIB_PATH "${FFMPEG_PREBUILT_DIR}/lib")
+if(NOT EXISTS "${FFMPEG_PREBUILT_DIR}/include/libavcodec/avcodec.h")
+	message(FATAL_ERROR "FFmpeg package headers are missing")
 endif()
+target_include_directories(${FFMPEG_CORE_NAME} INTERFACE "${FFMPEG_PREBUILT_DIR}/include")
+install(DIRECTORY "${FFMPEG_PREBUILT_DIR}/share/ffmpeg/" DESTINATION "licenses/ffmpeg")
 
 set(LIB_PREFIX "lib")
 set(LIB_EXT "a")
@@ -81,3 +89,8 @@ target_link_libraries(${FFMPEG_CORE_NAME} INTERFACE
 	"${FFMPEG_LIB_PATH}/${LIB_PREFIX}avutil.${LIB_EXT}"
 	"${FFMPEG_LIB_PATH}/${LIB_PREFIX}avfilter.${LIB_EXT}"
 	"${FFMPEG_LIB_PATH}/${LIB_PREFIX}swresample.${LIB_EXT}")
+
+if(UNIX AND NOT APPLE)
+	find_package(Threads REQUIRED)
+	target_link_libraries(${FFMPEG_CORE_NAME} INTERFACE m Threads::Threads ${CMAKE_DL_LIBS})
+endif()
