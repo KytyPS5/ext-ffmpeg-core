@@ -1,155 +1,134 @@
-# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
-name: C/C++ CI
+name: Build FFmpeg
 
-on: [push]
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  VCPKG_ROOT: ${{ github.workspace }}/_vcpkg
+  VCPKG_BINARY_SOURCES: clear
+  VCPKG_DISABLE_METRICS: '1'
+  VCPKG_KEEP_ENV_VARS: KYTY_MSYS_ROOT
 
 jobs:
-
   build:
-    name: ${{ matrix.build }} ${{ matrix.arch }}
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-
     strategy:
       fail-fast: false
       matrix:
-        build: [linux, windows, macos]
-        arch: [x64, arm64]
         include:
-          - build: linux
-            os: ubuntu-latest
-            triplet: linux-release
-            vcpkg-root: /usr/local/share/vcpkg
-            extra-args: ""
-          - build: windows
-            os: windows-latest
-            triplet: win-llvm-static-release
-            vcpkg-root: C:\vcpkg
-            extra-args: --overlay-triplets=./triplets
-          - build: mingw
-            os: windows-latest
-            triplet: mingw-static
-            vcpkg-root: C:\vcpkg
-            arch: x64
-            extra-args: ""
-          - build: macos
-            os: macos-latest
-            triplet: osx-release
-            vcpkg-root: /Users/runner/vcpkg
-            extra-args: ""
-          - build: macos
-            os: macos-latest
-            arch: universal
-            triplet: osx-release
-            vcpkg-root: /Users/runner/vcpkg
-            extra-args: --overlay-triplets=./triplets
-
+          - {name: linux-x64, os: ubuntu-24.04, triplet: x64-linux-release}
+          - {name: linux-arm64, os: ubuntu-24.04-arm, triplet: arm64-linux-release}
+          - {name: windows-x64, os: windows-2022, triplet: x64-win-llvm-static-release}
+          - {name: windows-arm64, os: windows-2022, triplet: arm64-win-llvm-static-release}
+          - {name: mingw-x64, os: windows-2022, triplet: x64-mingw-static}
+          - {name: macos-x64, os: macos-15, triplet: x64-osx-release}
+          - {name: macos-arm64, os: macos-15, triplet: arm64-osx-release}
+          - {name: macos-universal, os: macos-15, triplet: universal-osx-release}
     steps:
-      - run: git config --global core.autocrlf input
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: df8bfe519564ae001903e5cdd32af0999531ef71
+          path: _vcpkg
+
+      - name: Install Linux tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y nasm pkg-config
+
+      - name: Install macOS tools
+        if: runner.os == 'macOS'
+        run: brew install nasm
+
       - uses: msys2/setup-msys2@v2
         id: msys2
+        if: runner.os == 'Windows'
         with:
           msystem: CLANG64
           update: true
-          pacboy: >-
-            toolchain:p
-            cmake:p
-            ninja:p
-        if: matrix.triplet == 'mingw-static'
-      - uses: actions/checkout@v4
-
-      - name: Set up build environment (macos-latest)
-        run: |
-          brew install nasm vcpkg
-          git clone https://github.com/microsoft/vcpkg "$HOME/vcpkg"
-          echo VCPKG_ROOT="$HOME/vcpkg" >> $GITHUB_ENV
-        if: matrix.os == 'macos-latest'
-
-      - name: Patch Ubuntu mirrors (ubuntu-latest)
-        run: |
-          sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
-          sudo tee /etc/apt/sources.list > /dev/null <<EOL
-          deb http://archive.ubuntu.com/ubuntu noble main universe restricted multiverse
-          deb http://archive.ubuntu.com/ubuntu noble-updates main universe restricted multiverse
-          deb http://archive.ubuntu.com/ubuntu noble-backports main universe restricted multiverse
-          deb http://security.ubuntu.com/ubuntu noble-security main universe restricted multiverse
-          EOL
-          sudo apt-get clean
-          sudo apt-get update || sudo apt-get update --fix-missing
-        if: matrix.os == 'ubuntu-latest'
-
-      - name: Set up build environment (ubuntu-latest)
-        run: |
-          sudo apt-get install -y nasm
-        if: matrix.os == 'ubuntu-latest'
-
-      - name: Set up build environment (arm64 ubuntu-latest)
-        run: |
-          sudo apt-get install -y --fix-missing \
-            binutils-aarch64-linux-gnu \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu
-        if: matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64'
+          install: automake make diffutils pkgconf
+          pacboy: ${{ matrix.name == 'mingw-x64' && 'toolchain:p cmake:p ninja:p pkgconf:p' || 'pkgconf:p' }}
 
       - name: Patch vcpkg
-        run: |
-          (cd ${{ matrix.vcpkg-root }} && git fetch origin)
-          (cd ${{ matrix.vcpkg-root }} && git reset --hard)
-          (cd ${{ matrix.vcpkg-root }} && git checkout df8bfe519564ae001903e5cdd32af0999531ef71)
-          (cd ${{ matrix.vcpkg-root }} && git apply --ignore-space-change --ignore-whitespace --3way ${{ github.workspace }}/ffmpeg.patch)
+        run: git -C _vcpkg apply --check --ignore-space-change --ignore-whitespace ../ffmpeg.patch
+      - run: git -C _vcpkg apply --ignore-space-change --ignore-whitespace ../ffmpeg.patch
 
-      - name: Bootstrap vcpkg (windows-latest)
+      - name: Build on Unix
+        if: runner.os != 'Windows'
         run: |
-          (cd ${{ matrix.vcpkg-root }} && .\bootstrap-vcpkg.bat)
-        if: matrix.os == 'windows-latest'
+          ./_vcpkg/bootstrap-vcpkg.sh -disableMetrics
+          ./_vcpkg/vcpkg install --overlay-triplets=./triplets \
+            'ffmpeg[core,avcodec,avfilter,avdevice,avformat,swresample,swscale]:${{ matrix.triplet }}'
 
-      - name: Build ffmpeg
+      - name: Build on Windows
+        if: runner.os == 'Windows' && matrix.name != 'mingw-x64'
+        shell: pwsh
+        env:
+          KYTY_MSYS_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: |
-            vcpkg ${{ matrix.extra-args }} install ffmpeg[avcodec,avfilter,avdevice,avformat,swresample,swscale]:${{ matrix.arch }}-${{ matrix.triplet }}
-        if: matrix.triplet != 'mingw-static'
+          ./_vcpkg/bootstrap-vcpkg.bat -disableMetrics
+          ./_vcpkg/vcpkg.exe install --overlay-triplets=./triplets `
+            'ffmpeg[core,avcodec,avfilter,avdevice,avformat,swresample,swscale]:${{ matrix.triplet }}'
 
-      - name: Build ffmpeg (x64-mingw-static)
+      - name: Bootstrap MinGW
+        if: matrix.name == 'mingw-x64'
+        shell: pwsh
+        run: ./_vcpkg/bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Build MinGW
+        if: matrix.name == 'mingw-x64'
         shell: msys2 {0}
+        env:
+          KYTY_MSYS_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: |
-            export PATH=$(cygpath '${{ matrix.vcpkg-root }}'):$PATH
-            vcpkg ${{ matrix.extra-args }} install ffmpeg[avcodec,avfilter,avdevice,avformat,swresample,swscale]:${{ matrix.arch }}-${{ matrix.triplet }}
-        if: matrix.triplet == 'mingw-static'
+          ./_vcpkg/vcpkg.exe install \
+            'ffmpeg[core,avcodec,avfilter,avdevice,avformat,swresample,swscale]:${{ matrix.triplet }}'
+
+      - name: Package libraries and source
+        run: python scripts/package.py --triplet ${{ matrix.triplet }} --name ${{ matrix.name }}
+
+      - name: Test Linux libraries
+        if: matrix.name == 'linux-x64' || matrix.name == 'linux-arm64'
+        run: |
+          cmake -S tests -B _tests -DFFMPEG_PREBUILT_DIR="$PWD/_package"
+          cmake --build _tests --parallel
+          ctest --test-dir _tests --output-on-failure
+          if readelf -d _tests/codec_test | grep -E 'NEEDED.*lib(avcodec|avformat|avutil|swscale|swresample|avfilter)'; then
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg-${{ matrix.build }}-${{ matrix.arch }}
-          path: ${{ matrix.vcpkg-root }}/packages/ffmpeg_${{ matrix.arch }}-${{ matrix.triplet }}/lib
-        if: ${{ always() }}
+          name: ffmpeg-${{ matrix.name }}
+          path: artifacts/*
+          if-no-files-found: error
 
-  create-release:
-    needs: [build]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master'
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
-      
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download Artifacts
-        uses: actions/download-artifact@v4
-        
-      - name: Compute short git commit SHA
-        run: |
-          echo "COMMIT_SHORT_SHA=$(git rev-parse --short ${{ github.sha }})" >> $GITHUB_ENV
-          echo ${{ env.COMMIT_SHORT_SHA }}
-
-      - name: Upload
-        shell: bash
-        run: |
-          mkdir artifacts/
-          files=$(find . -name "ffmpeg-*")
-          for f in $files; do
-            echo "Compressing $f"
-            (cd $(basename $f) && zip -r ../artifacts/$(basename $f).zip *)
-          done
-          ls -al artifacts/
-          wget -c https://github.com/tcnksm/ghr/releases/download/v0.14.0/ghr_v0.14.0_linux_amd64.tar.gz
-          tar xfv ghr_v0.14.0_linux_amd64.tar.gz
-          ghr_v0.14.0_linux_amd64/ghr -u shadps4-emu -r ext-ffmpeg-core -n 'Automatic FFmpeg CI builds (${{ env.COMMIT_SHORT_SHA }})' -b "$(printf "Corresponding commit: ${{ github.sha }}")" ${{ env.COMMIT_SHORT_SHA }} artifacts/
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish libraries
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(git rev-parse --short=12 HEAD)"
+          (cd artifacts && sha256sum * > SHA256SUMS)
+          gh release create "$tag" artifacts/* --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "FFmpeg $tag" --notes ''
