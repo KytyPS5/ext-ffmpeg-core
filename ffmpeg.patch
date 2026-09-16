@@ -33,8 +33,7 @@ index e536d1a449..0c4a46bf79 100644
      set(OPTIONS "--toolchain=msvc ${OPTIONS}")
      # This is required because ffmpeg depends upon optimizations to link correctly
      string(APPEND VCPKG_COMBINED_C_FLAGS_DEBUG " -O2")
-@@ -151,7 +164,11 @@ endif()
- 
+@@ -152,6 +165,10 @@ endif()
  if(VCPKG_HOST_IS_WINDOWS)
 -    vcpkg_acquire_msys(MSYS_ROOT PACKAGES automake)
 +    if(DEFINED ENV{KYTY_MSYS_ROOT})
