@@ -48,7 +48,7 @@ index e536d1a449..0c4a46bf79 100644
 @@ -695,4 +712,8 @@ endforeach()
 -vcpkg_find_acquire_program(PKGCONFIG)
 +if(VCPKG_HOST_IS_WINDOWS AND DEFINED ENV{KYTY_MSYS_ROOT})
-+    set(PKGCONFIG "${MSYS_ROOT}/usr/bin/pkgconf.exe")
++    set(PKGCONFIG "${MSYS_ROOT}/clang64/bin/pkgconf.exe")
 +else()
 +    vcpkg_find_acquire_program(PKGCONFIG)
 +endif()

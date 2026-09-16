@@ -56,7 +56,7 @@ jobs:
           msystem: CLANG64
           update: true
           install: automake make diffutils pkgconf
-          pacboy: ${{ matrix.name == 'mingw-x64' && 'toolchain:p cmake:p ninja:p' || '' }}
+          pacboy: ${{ matrix.name == 'mingw-x64' && 'toolchain:p cmake:p ninja:p pkgconf:p' || 'pkgconf:p' }}
 
       - name: Patch vcpkg
         run: git -C _vcpkg apply --check --ignore-space-change --ignore-whitespace ../ffmpeg.patch
